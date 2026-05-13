@@ -1,0 +1,16 @@
+{
+  "name": "졸라맨 아이 vs 쥐떼",
+  "short_name": "쥐피하기",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#020617",
+  "theme_color": "#020617",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icon.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
