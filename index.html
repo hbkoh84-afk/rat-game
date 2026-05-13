@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>졸라맨 아이 vs 쥐떼</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+    }
+
+    body {
+      margin: 0;
+      background: #020617;
+      font-family: Arial, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      color: #111827;
+      touch-action: none;
+    }
+
+    .game-wrap {
+      width: 100%;
+      max-width: 430px;
+      padding: 12px;
+    }
+
+    .panel {
+      background: white;
+      border-radius: 24px;
+      padding: 12px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+    }
+
+    .top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    h1 {
+      font-size: 20px;
+      margin: 0;
+      font-weight: 900;
+    }
+
+    .desc {
+      font-size: 12px;
+      color: #64748b;
+      margin-top: 3px;
+    }
+
+    button {
+      border: 0;
+      background: #2563eb;
+      color: white;
+      font-weight: 800;
+      border-radius: 16px;
+      padding: 10px 14px;
+      font-size: 14px;
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .stat {
+      background: #f1f5f9;
+      border-radius: 16px;
+      padding: 8px;
+      text-align: center;
+    }
+
+    .stat .label {
+      font-size: 11px;
+      color: #64748b;
+    }
+
+    .stat .value {
+      font-size: 20px;
+      font-weight: 900;
+      margin-top: 2px;
+    }
+
+    .level-box {
+      background: #dbeafe;
+      color: #1d4ed8;
+    }
+
+    canvas {
+      width: 100%;
+      display: block;
+      background: #f8fafc;
+      border-radius: 24px;
+      border: 1px solid #e5e7eb;
+      touch-action: none;
+    }
+
+    .help {
+      margin-top: 10px;
+      background: #f1f5f9;
+      border-radius: 16px;
+      padding: 10px;
+      font-size: 12px;
+      color: #475569;
+      line-height: 1.45;
+    }
+  </style>
+</head>
+<body>
+  <div class="game-wrap">
+    <div class="panel">
+      <div class="top">
+        <div>
+          <h1>졸라맨 아이 vs 쥐떼</h1>
+          <div class="desc">터치한 곳으로 이동해서 쥐를 피해라</div>
+        </div>
+        <button onclick="resetGame()">다시</button>
+      </div>
+
+      <div class="stats">
+        <div class="stat">
+          <div class="label">점수</div>
+          <div class="value" id="score">0</div>
+        </div>
+        <div class="stat level-box">
+          <div class="label">레벨</div>
+          <div class="value" id="level">1</div>
+        </div>
+        <div class="stat">
+          <div class="label">최고</div>
+          <div class="value" id="best">0</div>
+        </div>
+      </div>
+
+      <canvas id="game" width="360" height="620"></canvas>
+
+      <div class="help">
+        화면을 터치하거나 드래그하면 아이가 그쪽으로 이동합니다. 15초마다 레벨이 올라가고, 쥐가 더 많이 더 빠르게 몰려옵니다.
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById("game");
+    const ctx = canvas.getContext("2d");
+
+    const scoreEl = document.getElementById("score");
+    const levelEl = document.getElementById("level");
+    const bestEl = document.getElementById("best");
+
+    const W = canvas.width;
+    const H = canvas.height;
+    const MAX_LEVEL = 5;
+
+    let player;
+    let target;
+    let rats;
+    let score;
+    let bestScore = Number(localStorage.getItem("ratGameBestScore") || 0);
+    let level;
+    let gameOver;
+    let startTime;
+    let lastSpawnTime;
+    let lastFrameTime;
+
+    bestEl.textContent = bestScore;
+
+    function resetGame() {
+      player = { x: W / 2, y: H / 2, r: 15, speed: 3.4 };
+      target = { x: W / 2, y: H / 2 };
+      rats = [];
+      score = 0;
+      level = 1;
+      gameOver = false;
+      startTime = performance.now();
+      lastSpawnTime = 0;
+      lastFrameTime = performance.now();
+      updateUI();
+    }
+
+    function getLevelConfig(lv) {
+      const configs = {
+        1: { spawnInterval: 1450, spawnCount: 1, ratSpeed: 1.05, chase: 0.004 },
+        2: { spawnInterval: 1150, spawnCount: 1, ratSpeed: 1.25, chase: 0.005 },
+        3: { spawnInterval: 900, spawnCount: 2, ratSpeed: 1.42, chase: 0.006 },
+        4: { spawnInterval: 700, spawnCount: 2, ratSpeed: 1.62, chase: 0.007 },
+        5: { spawnInterval: 520, spawnCount: 3, ratSpeed: 1.85, chase: 0.0085 }
+      };
+      return configs[lv] || configs[5];
+    }
+
+    function updateUI() {
+      scoreEl.textContent = score;
+      levelEl.textContent = level;
+      bestEl.textContent = bestScore;
+    }
+
+    function spawnRat() {
+      const config = getLevelConfig(level);
+      const side = Math.floor(Math.random() * 4);
+      let x, y;
+
+      if (side === 0) {
+        x = Math.random() * W;
+        y = -35;
+      } else if (side === 1) {
+        x = W + 35;
+        y = Math.random() * H;
+      } else if (side === 2) {
+        x = Math.random() * W;
+        y = H + 35;
+      } else {
+        x = -35;
+        y = Math.random() * H;
+      }
+
+      const angle = Math.atan2(player.y - y, player.x - x);
+      const speed = config.ratSpeed + Math.random() * 0.35;
+
+      rats.push({
+        x,
+        y,
+        r: 12,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        wiggle: Math.random() * 10
+      });
+    }
+
+    function drawBackground() {
+      ctx.fillStyle = "#f8fafc";
+      ctx.fillRect(0, 0, W, H);
+
+      ctx.strokeStyle = "#e5e7eb";
+      ctx.lineWidth = 1;
+
+      for (let x = 0; x <= W; x += 36) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, H);
+        ctx.stroke();
+      }
+
+      for (let y = 0; y <= H; y += 36) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(W, y);
+        ctx.stroke();
+      }
+    }
+
+    function drawPlayer() {
+      const p = player;
+      ctx.save();
+      ctx.strokeStyle = "#111827";
+      ctx.lineWidth = 4;
+      ctx.lineCap = "round";
+
+      ctx.beginPath();
+      ctx.arc(p.x, p.y - 23, 10, 0, Math.PI * 2);
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y - 13);
+      ctx.lineTo(p.x, p.y + 17);
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(p.x - 18, p.y);
+      ctx.lineTo(p.x + 18, p.y);
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y + 17);
+      ctx.lineTo(p.x - 14, p.y + 39);
+      ctx.moveTo(p.x, p.y + 17);
+      ctx.lineTo(p.x + 14, p.y + 39);
+      ctx.stroke();
+
+      ctx.fillStyle = "#111827";
+      ctx.beginPath();
+      ctx.arc(p.x - 3.5, p.y - 25, 1.4, 0, Math.PI * 2);
+      ctx.arc(p.x + 3.5, p.y - 25, 1.4, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.restore();
+    }
+
+    function drawRat(rat) {
+      ctx.save();
+      ctx.translate(rat.x, rat.y);
+
+      ctx.fillStyle = "#57534e";
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 14, 8, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = "#44403c";
+      ctx.beginPath();
+      ctx.arc(10, -5, 3.8, 0, Math.PI * 2);
+      ctx.arc(10, 5, 3.8, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = "#111827";
+      ctx.beginPath();
+      ctx.arc(14, 0, 2.2, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.strokeStyle = "#78716c";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(-13, 0);
+      ctx.quadraticCurveTo(-23, Math.sin(rat.wiggle) * 7, -31, Math.cos(rat.wiggle) * 5);
+      ctx.stroke();
+
+      ctx.restore();
+    }
+
+    function drawTarget() {
+      ctx.save();
+      ctx.strokeStyle = "#2563eb";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(target.x, target.y, 9, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(target.x - 14, target.y);
+      ctx.lineTo(target.x + 14, target.y);
+      ctx.moveTo(target.x, target.y - 14);
+      ctx.lineTo(target.x, target.y + 14);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function endGame() {
+      gameOver = true;
+      if (score > bestScore) {
+        bestScore = score;
+        localStorage.setItem("ratGameBestScore", bestScore);
+      }
+      updateUI();
+    }
+
+    function drawGameOver() {
+      ctx.save();
+      ctx.fillStyle = "rgba(15, 23, 42, 0.76)";
+      ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = "white";
+      ctx.textAlign = "center";
+      ctx.font = "bold 36px Arial";
+      ctx.fillText("GAME OVER", W / 2, H / 2 - 32);
+      ctx.font = "18px Arial";
+      ctx.fillText("점수 " + score, W / 2, H / 2 + 2);
+      ctx.font = "15px Arial";
+      ctx.fillText("다시 버튼을 눌러줘", W / 2, H / 2 + 34);
+      ctx.restore();
+    }
+
+    function loop(now) {
+      const delta = Math.min((now - lastFrameTime) / 16.67, 2);
+      lastFrameTime = now;
+
+      drawBackground();
+
+      if (!gameOver) {
+        const elapsedSeconds = (now - startTime) / 1000;
+        level = Math.min(MAX_LEVEL, Math.floor(elapsedSeconds / 15) + 1);
+        score = Math.floor(elapsedSeconds * 10);
+
+        const config = getLevelConfig(level);
+
+        const dx = target.x - player.x;
+        const dy = target.y - player.y;
+        const dist = Math.hypot(dx, dy);
+
+        if (dist > 2) {
+          player.x += (dx / dist) * player.speed * delta;
+          player.y += (dy / dist) * player.speed * delta;
+        }
+
+        player.x = Math.max(24, Math.min(W - 24, player.x));
+        player.y = Math.max(42, Math.min(H - 42, player.y));
+
+        if (now - lastSpawnTime > config.spawnInterval) {
+          for (let i = 0; i < config.spawnCount; i++) {
+            spawnRat();
+          }
+          lastSpawnTime = now;
+        }
+
+        for (const rat of rats) {
+          const angleToPlayer = Math.atan2(player.y - rat.y, player.x - rat.x);
+          rat.vx += Math.cos(angleToPlayer) * config.chase * delta;
+          rat.vy += Math.sin(angleToPlayer) * config.chase * delta;
+          rat.x += rat.vx * delta;
+          rat.y += rat.vy * delta;
+          rat.wiggle += 0.18 * delta;
+        }
+
+        rats = rats.filter(rat => rat.x > -80 && rat.x < W + 80 && rat.y > -80 && rat.y < H + 80);
+
+        for (const rat of rats) {
+          const hitDistance = Math.hypot(player.x - rat.x, player.y - rat.y);
+          if (hitDistance < player.r + rat.r) {
+            endGame();
+            break;
+          }
+        }
+
+        updateUI();
+      }
+
+      drawTarget();
+      rats.forEach(drawRat);
+      drawPlayer();
+
+      if (gameOver) {
+        drawGameOver();
+      }
+
+      requestAnimationFrame(loop);
+    }
+
+    function setTargetFromEvent(clientX, clientY) {
+      if (gameOver) return;
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = W / rect.width;
+      const scaleY = H / rect.height;
+      target.x = (clientX - rect.left) * scaleX;
+      target.y = (clientY - rect.top) * scaleY;
+    }
+
+    canvas.addEventListener("mousedown", e => {
+      setTargetFromEvent(e.clientX, e.clientY);
+    });
+
+    canvas.addEventListener("mousemove", e => {
+      if (e.buttons === 1) {
+        setTargetFromEvent(e.clientX, e.clientY);
+      }
+    });
+
+    canvas.addEventListener("touchstart", e => {
+      e.preventDefault();
+      const touch = e.touches[0];
+      setTargetFromEvent(touch.clientX, touch.clientY);
+    }, { passive: false });
+
+    canvas.addEventListener("touchmove", e => {
+      e.preventDefault();
+      const touch = e.touches[0];
+      setTargetFromEvent(touch.clientX, touch.clientY);
+    }, { passive: false });
+
+    resetGame();
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>
